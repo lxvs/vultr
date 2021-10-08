@@ -1,0 +1,100 @@
+#!/bin/sh
+# lxvs.net
+# 2021-10-08
+
+set -o nounset
+
+IsMounted () {
+	local mp
+	test $# -ge 1 || return
+	mp="$1"
+	mountpoint -q -- "$mp"
+}
+
+PartBlockStorage () {
+	parted -s /dev/vdb mklabel gpt || return
+	parted -s /dev/vdb unit mib mkpart primary 0% 100% || return
+	mkfs.ext4 /dev/vdb1 || return
+}
+
+MountBlockStorage () {
+	local mp
+	test $# -ge 1 || return
+	mp="$1"
+	test -d "$mp" || mkdir "$mp" || return
+	printf "%s\n" "$fstab_str" >>"$fstab_f" || return
+	mount "$mp" || return
+}
+
+InitBlockStorage () {
+	if IsMounted "$mp"
+	then
+		>&2 printf "%s\n" "ERROR: $mp is already mounted!"
+		return 1
+	fi
+	PartBlockStorage || return
+	MountBlockStorage "$mp" || return
+}
+
+RemoveBlockStorage () {
+	IsMounted "$mp" && umount "$mp"
+	cp "$fstab_f" "${fstab_f}.bak.$EPOCHSECONDS" 
+	grep -vF "$fstab_str" "$fstab_f" >"/tmp/fstab" && mv "/tmp/fstab" "$fstab_f"
+}
+
+mainUsage () {
+cat <<\EOF
+
+vultr bs { init | remove }
+
+Init or remove a block storage.
+
+EOF
+}
+
+main () {
+	local mp="/root/Download"
+	local fstab_f="/etc/fstab"
+	local fstab_str="/dev/vdb1	$mp	ext4	defaults,noatime,nofail 0 0"
+	if test $# -eq 0
+	then
+		mainUsage
+		return
+	fi
+	case "$1" in
+	-h|--help)
+		mainUsage
+		;;
+	bs)
+		if test $# -lt 2
+		then
+			mainUsage
+			return
+		fi
+		case "$2" in
+		-h|--help)
+			mainUsage
+			return
+			;;
+		init)
+			InitBlockStorage "$@"
+			;;
+		remove)
+			RemoveBlockStorage "$@"
+			;;
+		*)
+			>&2 printf "%s\n" "ERROR: invalid argument: $2"
+			>&2 mainUsage
+			return
+			;;
+		esac
+		;;
+	*)
+		>&2 printf "%s\n" "ERROR: invalid command: $1"
+		>&2 mainUsage
+		return
+		;;
+	esac
+}
+
+main "$@"
